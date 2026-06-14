@@ -53,6 +53,12 @@ return new class extends Migration
             });
         }
 
+        if (!$this->indexExists('cart_items', 'cart_items_cart_id_index')) {
+            Schema::table('cart_items', function (Blueprint $table) {
+                $table->index('cart_id');
+            });
+        }
+
         if ($this->indexExists('cart_items', 'cart_items_cart_id_product_id_unique')) {
             Schema::table('cart_items', function (Blueprint $table) {
                 $table->dropUnique(['cart_id', 'product_id']);

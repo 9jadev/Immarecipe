@@ -9,12 +9,31 @@ return new class extends Migration
 {
     private function indexExists(string $table, string $indexName): bool
     {
-        $indexes = DB::select("PRAGMA index_list('{$table}')");
+        $driver = Schema::getConnection()->getDriverName();
 
-        foreach ($indexes as $index) {
-            if (($index->name ?? null) === $indexName) {
-                return true;
+        if ($driver === 'sqlite') {
+            $indexes = DB::select("PRAGMA index_list('{$table}')");
+
+            foreach ($indexes as $index) {
+                if (($index->name ?? null) === $indexName) {
+                    return true;
+                }
             }
+
+            return false;
+        }
+
+        if ($driver === 'mysql' || $driver === 'mariadb') {
+            $rows = DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName]);
+            return count($rows) > 0;
+        }
+
+        if ($driver === 'pgsql') {
+            $rows = DB::select(
+                "select 1 from pg_indexes where schemaname = current_schema() and tablename = ? and indexname = ? limit 1",
+                [$table, $indexName]
+            );
+            return count($rows) > 0;
         }
 
         return false;

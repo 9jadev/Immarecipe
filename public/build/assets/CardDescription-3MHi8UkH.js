@@ -1,0 +1,1 @@
+import{A as e,E as t,St as n,W as r,bt as i,q as a}from"./dist-C-pYBmGL.js";import{t as o}from"./utils-BVSInnSF.js";var s=e({__name:`CardDescription`,props:{class:{type:[Boolean,null,String,Object,Array]}},setup(e){let s=e;return(e,c)=>(r(),t(`p`,{"data-slot":`card-description`,class:n(i(o)(`text-muted-foreground text-sm`,s.class))},[a(e.$slots,`default`)],2))}});export{s as t};

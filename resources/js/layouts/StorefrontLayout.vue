@@ -299,7 +299,7 @@ onMounted(() => {
         </footer>
 
         <!-- WhatsApp Floating Button -->
-        <a href="https://wa.me/2348169713332" target="blank" rel="noopener noreferrer"
+        <a href="https://wa.me/2347032887276" target="blank" rel="noopener noreferrer"
             class="fixed bottom-6 right-6 bg-primary hover:bg-[var(--primary-hover)] text-primary-foreground p-4 rounded-full shadow-lg hover:shadow-xl z-50 transition-all hover:scale-105">
             <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
                 <path

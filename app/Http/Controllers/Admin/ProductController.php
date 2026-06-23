@@ -8,7 +8,9 @@ use App\Models\Product;
 use App\Models\ProductVariantOption;
 use App\Models\ProductVariantValue;
 use App\Models\ProductVariant;
+use Cloudinary\Cloudinary;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -16,6 +18,8 @@ use Inertia\Inertia;
 
 class ProductController extends Controller
 {
+    private const IMAGE_DISK = 'cloudinary';
+
     /**
      * Display a listing of the products.
      */
@@ -122,8 +126,7 @@ class ProductController extends Controller
         $imageUrls = [];
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $image) {
-                $path = $image->store('products', 'public');
-                $imageUrls[] = Storage::url($path);
+                $imageUrls[] = $this->uploadProductImage($image);
             }
         }
         $validated['images'] = $imageUrls;
@@ -243,8 +246,7 @@ class ProductController extends Controller
         $imageUrls = $request->input('existing_images', []);
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $image) {
-                $path = $image->store('products', 'public');
-                $imageUrls[] = Storage::url($path);
+                $imageUrls[] = $this->uploadProductImage($image);
             }
         }
         $validated['images'] = $imageUrls;
@@ -253,8 +255,7 @@ class ProductController extends Controller
         if ($product->images) {
             foreach ($product->images as $oldImage) {
                 if (! in_array($oldImage, $imageUrls)) {
-                    $relativePath = str_replace('/storage/', '', $oldImage);
-                    Storage::disk('public')->delete($relativePath);
+                    $this->deleteProductImage($oldImage);
                 }
             }
         }
@@ -383,5 +384,125 @@ class ProductController extends Controller
         // Create new ones
         $this->createVariants($product, $optionsData, $variantsData);
     }
-}
 
+    private function uploadProductImage(UploadedFile $image): string
+    {
+        $response = $this->cloudinary()->uploadApi()->upload(
+            $image->getRealPath(),
+            array_filter([
+                'folder' => 'products',
+                'public_id' => (string) Str::uuid(),
+                'resource_type' => 'image',
+                'type' => 'upload',
+                'upload_preset' => config('services.cloudinary.upload_preset'),
+            ], static fn ($value) => $value !== null && $value !== '')
+        )->getArrayCopy();
+
+        // #region debug-point A:cloudinary-upload-metadata
+        (static function () use ($response): void { $p = base_path('.dbg/cloudinary-image-404.env'); $u = 'http://127.0.0.1:7777/event'; $s = 'cloudinary-image-404'; if (is_file($p)) { foreach (file($p, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) { if (str_starts_with($line, 'DEBUG_SERVER_URL=')) { $u = substr($line, 17); } elseif (str_starts_with($line, 'DEBUG_SESSION_ID=')) { $s = substr($line, 17); } } } @file_get_contents($u, false, stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/json\r\n", 'content' => json_encode(['sessionId' => $s, 'runId' => 'post-fix', 'hypothesisId' => 'A', 'location' => 'app/Http/Controllers/Admin/ProductController.php:399', 'msg' => '[DEBUG] Cloudinary upload response captured', 'data' => ['public_id' => $response['public_id'] ?? null, 'format' => $response['format'] ?? null, 'version' => $response['version'] ?? null, 'secure_url' => $response['secure_url'] ?? null], 'ts' => (int) round(microtime(true) * 1000)]), 'ignore_errors' => true, 'timeout' => 2]])); })();
+        // #endregion
+
+        $secureUrl = $response['secure_url'] ?? null;
+
+        if (! is_string($secureUrl) || $secureUrl === '') {
+            throw new \RuntimeException('Unable to retrieve Cloudinary file URL after upload.');
+        }
+
+        return $secureUrl;
+    }
+
+    private function cloudinary(): Cloudinary
+    {
+        return new Cloudinary([
+            'cloud' => [
+                'cloud_name' => config('services.cloudinary.cloud_name'),
+                'api_key' => config('services.cloudinary.api_key'),
+                'api_secret' => config('services.cloudinary.api_secret'),
+            ],
+            'url' => [
+                'secure' => true,
+            ],
+        ]);
+    }
+
+    private function deleteProductImage(string $image): void
+    {
+        $cloudinaryPublicId = $this->extractCloudinaryPublicId($image);
+        if ($cloudinaryPublicId !== null) {
+            Storage::disk(self::IMAGE_DISK)->delete($cloudinaryPublicId);
+
+            return;
+        }
+
+        $localPath = $this->extractLocalStoragePath($image);
+        if ($localPath !== null) {
+            Storage::disk('public')->delete($localPath);
+        }
+    }
+
+    private function extractCloudinaryPublicId(string $image): ?string
+    {
+        $host = parse_url($image, PHP_URL_HOST);
+        if (! is_string($host) || ! str_contains($host, 'res.cloudinary.com')) {
+            return null;
+        }
+
+        $path = parse_url($image, PHP_URL_PATH);
+        if (! is_string($path) || $path === '') {
+            return null;
+        }
+
+        $segments = array_values(array_filter(explode('/', trim($path, '/'))));
+        $uploadIndex = array_search('upload', $segments, true);
+        if ($uploadIndex === false) {
+            return null;
+        }
+
+        $publicIdSegments = array_slice($segments, $uploadIndex + 1);
+        if ($publicIdSegments === []) {
+            return null;
+        }
+
+        foreach ($publicIdSegments as $index => $segment) {
+            if (preg_match('/^v\d+$/', $segment) === 1) {
+                $publicIdSegments = array_slice($publicIdSegments, $index + 1);
+                break;
+            }
+        }
+
+        if ($publicIdSegments === []) {
+            return null;
+        }
+
+        $lastSegment = array_pop($publicIdSegments);
+        if ($lastSegment === null) {
+            return null;
+        }
+
+        $filename = pathinfo($lastSegment, PATHINFO_FILENAME);
+        $publicIdSegments[] = $filename !== '' ? $filename : $lastSegment;
+
+        return implode('/', $publicIdSegments);
+    }
+
+    private function extractLocalStoragePath(string $image): ?string
+    {
+        $path = parse_url($image, PHP_URL_PATH);
+        $path = is_string($path) && $path !== '' ? $path : $image;
+        $path = trim($path);
+
+        if ($path === '') {
+            return null;
+        }
+
+        if (str_starts_with($path, '/storage/')) {
+            return Str::after($path, '/storage/');
+        }
+
+        if (str_starts_with($path, 'storage/')) {
+            return Str::after($path, 'storage/');
+        }
+
+        return null;
+    }
+}
